@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#11151a" />
+<title>Bitácora PlazaCamacho</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand"><div class="brand-mark">PC</div><div><h1>Bitácora PlazaCamacho</h1><p>Control de solicitudes recibidas por correo</p></div></div>
+    <div id="authArea"></div>
+  </div>
+</header>
+<main class="wrap">
+  <section id="gate" class="gate hidden">
+    <div class="gate-card"><h2>Conecta Gmail</h2><p>El sistema usa acceso de solo lectura para consultar y organizar los correos. No puede enviar, editar ni borrar mensajes.</p><button id="connectBtn" class="btn btn-primary">Conectar con Gmail</button></div>
+  </section>
+
+  <section id="dashboard" class="hidden">
+    <div class="summary">
+      <div><strong id="totalCount">0</strong><span>Correos</span></div>
+      <div><strong id="dayCount">0</strong><span>Día</span></div>
+      <div><strong id="nightCount">0</strong><span>Noche</span></div>
+      <div><strong id="companyCount">0</strong><span>Empresas</span></div>
+    </div>
+
+    <div class="panel filters">
+      <div class="field field-wide"><label>Buscar</label><input id="textFilter" placeholder="Empresa, asunto o detalle..." /></div>
+      <div class="field"><label>Desde</label><input id="dateFrom" type="date" /></div>
+      <div class="field"><label>Hasta</label><input id="dateTo" type="date" /></div>
+      <div class="field"><label>Turno</label><select id="shiftFilter"><option value="">Todos</option><option value="Día">Día</option><option value="Noche">Noche</option></select></div>
+      <div class="field"><label>Empresa</label><select id="companyFilter"><option value="">Todas</option></select></div>
+      <div class="filter-actions"><button id="clearBtn" class="btn btn-ghost">Limpiar</button><button id="reloadBtn" class="btn btn-primary">Actualizar Gmail</button></div>
+    </div>
+
+    <details class="advanced"><summary>Búsqueda de Gmail</summary><div class="advanced-row"><input id="queryInput" placeholder="Ej.: from:plazacamacho newer_than:1y"/><button id="searchBtn" class="btn btn-ghost">Aplicar</button></div><small>Esta búsqueda decide qué mensajes se leen desde Gmail.</small></details>
+
+    <div class="results-head"><h2>Solicitudes</h2><span id="countLabel"></span></div>
+    <div id="loadingState" class="state hidden"><div class="spinner"></div><p>Leyendo y clasificando correos…</p></div>
+    <div id="emptyState" class="state hidden"><p>No hay correos que coincidan con los filtros.</p></div>
+    <div id="errorState" class="state error hidden"><p id="errorText"></p></div>
+    <div id="list" class="list"></div>
+    <div id="pager" class="pager hidden"><button id="prevBtn" class="btn btn-ghost">← Anterior</button><span id="pageLabel"></span><button id="nextBtn" class="btn btn-ghost">Siguiente →</button></div>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-card">
+    <div class="modal-head"><div><span id="modalShift" class="badge"></span><h2 id="modalCompany"></h2></div><button id="closeModal" class="icon-btn" aria-label="Cerrar">×</button></div>
+    <div id="modalContent"></div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
