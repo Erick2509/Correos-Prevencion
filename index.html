@@ -4,14 +4,19 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#11151a" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Bitácora PC" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 <title>Bitácora PlazaCamacho</title>
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
 <header class="topbar">
   <div class="topbar-inner">
     <div class="brand"><div class="brand-mark">PC</div><div><h1>Bitácora PlazaCamacho</h1><p>Control de solicitudes recibidas por correo</p></div></div>
-    <div id="authArea"></div>
+    <div class="top-actions"><button id="installBtn" class="btn btn-ghost install-btn hidden">Instalar app</button><div id="authArea"></div></div>
   </div>
 </header>
 <main class="wrap">
@@ -53,6 +58,13 @@
     <div id="modalContent"></div>
   </div>
 </div>
-<script src="app.js"></script>
+
+<div id="installHelp" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-card install-card">
+    <div class="modal-head"><h2>Instalar Bitácora</h2><button id="closeInstallHelp" class="icon-btn" aria-label="Cerrar">×</button></div>
+    <div id="installHelpContent" class="install-help"></div>
+  </div>
+</div>
+<script src="app.js?v=4"></script>
 </body>
 </html>

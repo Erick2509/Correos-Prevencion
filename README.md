@@ -81,3 +81,27 @@ Sin `ANTHROPIC_API_KEY`, el sistema intenta detectar empresa, detalle, local, fe
 - El turno se determina por la hora de recepción del correo, no por una fecha/hora escrita dentro del mensaje.
 - La clasificación automática puede equivocarse; el botón **Abrir correo en Gmail** permite verificar el original.
 - Para un entorno corporativo con varios usuarios conviene añadir autenticación propia, almacenamiento central y controles de acceso antes de producción.
+
+## Versión PWA y detección mejorada
+
+Esta versión añade:
+
+- Detección de empresa leyendo toda la cadena del correo, incluidos encabezados reenviados `From/De`, `To/Para`, `CC`, dominios y asunto.
+- Diferenciación entre **Empresa** y **Local**. Ejemplos contemplados:
+  - `Locatario Argenper` + correos `@argenper.com.pe` -> Empresa: **Argenper**, Local: **Argenper**.
+  - cadena desde `@vmhingenieros.com` + asunto con `BCP...CAMACHO...EXT-MAN-VMH` -> Empresa: **VMH Ingenieros**, Local: **BCP Camacho**.
+- Botón **Abrir mensaje en Gmail** usando el `threadId` real de Gmail para ir al hilo exacto. En Android/iOS el comportamiento final depende de la asociación que el sistema tenga con Gmail; si la app no toma el enlace, se abre Gmail web directamente en ese hilo.
+- Diseño responsive para PC, tablet, Android y iPhone.
+- PWA instalable con `manifest.webmanifest`, `service worker` e iconos.
+- En Android/Chrome aparece la instalación nativa cuando el navegador lo permite.
+- En iPhone/iPad se muestra la guía para instalar desde Safari: Compartir -> Agregar a pantalla de inicio.
+
+### Archivos PWA nuevos
+
+- `manifest.webmanifest`
+- `sw.js`
+- `icons/icon-192.png`
+- `icons/icon-512.png`
+- `icons/apple-touch-icon.png`
+
+Vercel ya sirve el proyecto por HTTPS, por lo que no se requiere configuración adicional para activar la PWA después del redeploy.

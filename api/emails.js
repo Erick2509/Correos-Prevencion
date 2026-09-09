@@ -47,7 +47,7 @@ module.exports=async(req,res)=>{
       let parsed=await aiParse(subject,from,body).catch(()=>null);
       if(!parsed)parsed=heuristicParse(subject,from,body);
       if(isPromotionalEmail(subject,from,body))return null;
-      return {id:m.id,subject,from,receivedAt,turno:turnoFor(receivedAt,subject,body),empresa:parsed.empresa||'',trabajo:parsed.trabajo||parsed.detalle||subject,detalle:parsed.detalle||'',local:parsed.local||null,fechaSolicitud:parsed.fechaSolicitud||null,status:parsed.status||'Sin clasificar',body:cleanBody(body),attachments:attachments(full.payload)};
+      return {id:m.id,threadId:full.threadId||m.threadId||m.id,subject,from,receivedAt,turno:turnoFor(receivedAt,subject,body),empresa:parsed.empresa||'',trabajo:parsed.trabajo||parsed.detalle||subject,detalle:parsed.detalle||'',local:parsed.local||null,fechaSolicitud:parsed.fechaSolicitud||null,status:parsed.status||'Sin clasificar',body:cleanBody(body),attachments:attachments(full.payload)};
     });
 
     const filteredItems=items.filter(Boolean);

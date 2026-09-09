@@ -2,12 +2,52 @@ const $ = id => document.getElementById(id);
 const DEFAULT_QUERY = 'newer_than:1y';
 let allItems = [], filteredItems = [], page = 1, nextPageToken = null, loadingMore = false;
 const PAGE_SIZE = 10;
+let deferredInstallPrompt = null;
 
 function show(el){ el.classList.remove('hidden'); }
 function hide(el){ el.classList.add('hidden'); }
 function esc(v=''){ const d=document.createElement('div'); d.textContent=String(v); return d.innerHTML; }
 function fmtDate(iso){ if(!iso)return '—'; return new Date(iso).toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit',year:'numeric'}); }
 function fmtTime(iso){ if(!iso)return '—'; return new Date(iso).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}); }
+
+
+function isIOS(){return /iphone|ipad|ipod/i.test(navigator.userAgent)}
+function isAndroid(){return /android/i.test(navigator.userAgent)}
+function isStandalone(){return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true}
+function setupPWA(){
+  if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  const installBtn=$('installBtn');
+  if(isStandalone())return;
+  if(isIOS()){show(installBtn);installBtn.onclick=showInstallHelp;}
+  window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;show(installBtn);installBtn.onclick=installPWA;});
+  window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;hide(installBtn);});
+}
+async function installPWA(){
+  if(!deferredInstallPrompt){showInstallHelp();return;}
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice.catch(()=>{});
+  deferredInstallPrompt=null;
+  hide($('installBtn'));
+}
+function showInstallHelp(){
+  const c=$('installHelpContent');
+  if(isIOS())c.innerHTML='<p>En iPhone/iPad abre esta web en <b>Safari</b>, toca <b>Compartir</b> y elige <b>Agregar a pantalla de inicio</b>.</p><p>Después se abrirá como una app independiente.</p>';
+  else c.innerHTML='<p>Abre el menú del navegador y selecciona <b>Instalar app</b> o <b>Agregar a pantalla principal</b>.</p>';
+  show($('installHelp'));document.body.classList.add('no-scroll');
+}
+function closeInstallHelp(){hide($('installHelp'));document.body.classList.remove('no-scroll');}
+function gmailWebUrl(x){return `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(x.threadId||x.id)}`;}
+function openGmailMessage(x){
+  const web=gmailWebUrl(x);
+  if(isAndroid()){
+    const fallback=encodeURIComponent(web);
+    location.href=`intent://mail.google.com/mail/u/0/#all/${encodeURIComponent(x.threadId||x.id)}#Intent;scheme=https;package=com.google.android.gm;S.browser_fallback_url=${fallback};end`;
+    return;
+  }
+  // En iOS no existe un esquema público documentado para abrir un hilo específico.
+  // Abrimos el enlace del hilo: si Gmail está asociado lo toma la app; si no, abre Gmail web en ese mensaje.
+  location.href=web;
+}
 
 async function init(){
   const r=await fetch('/api/session'); const d=await r.json();
@@ -23,7 +63,7 @@ $('clearBtn').onclick=()=>{ $('textFilter').value=''; $('dateFrom').value=''; $(
 ['textFilter','dateFrom','dateTo','shiftFilter','companyFilter'].forEach(id=>$(id).addEventListener(id==='textFilter'?'input':'change',applyFilters));
 $('prevBtn').onclick=()=>{ if(page>1){page--;renderPage();} };
 $('nextBtn').onclick=()=>{ if(page*PAGE_SIZE<filteredItems.length){page++;renderPage();} };
-$('closeModal').onclick=closeModal; $('modal').onclick=e=>{if(e.target===$('modal'))closeModal();}; document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+$('closeModal').onclick=closeModal; $('modal').onclick=e=>{if(e.target===$('modal'))closeModal();}; $('closeInstallHelp').onclick=closeInstallHelp; $('installHelp').onclick=e=>{if(e.target===$('installHelp'))closeInstallHelp();}; document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();closeInstallHelp();}});
 
 async function loadEmails(more=false){
   if(loadingMore)return; loadingMore=true;
@@ -59,6 +99,7 @@ function renderPage(){
   document.querySelectorAll('.mail-card').forEach(card=>card.querySelector('.detail-btn').onclick=()=>openModal(card.dataset.id));
   const pages=Math.ceil(filteredItems.length/PAGE_SIZE); $('pageLabel').textContent=`Página ${page} de ${pages}`; $('prevBtn').disabled=page===1; $('nextBtn').disabled=page===pages; pages>1?show($('pager')):hide($('pager'));
 }
-function openModal(id){ const x=allItems.find(i=>i.id===id); if(!x)return; $('modalShift').textContent=x.turno; $('modalShift').className='badge '+(x.turno==='Noche'?'night':''); $('modalCompany').textContent=x.empresa||'Empresa no detectada'; $('modalContent').innerHTML=`<div class="detail-grid"><div><label>Fecha</label><p>${fmtDate(x.receivedAt)}</p></div><div><label>Hora</label><p>${fmtTime(x.receivedAt)}</p></div><div><label>Remitente</label><p>${esc(x.from)}</p></div><div><label>Estado</label><p>${esc(x.status||'Sin clasificar')}</p></div></div><div class="detail-section"><label>Asunto</label><p>${esc(x.subject)}</p></div><div class="detail-section highlight"><label>Trabajo / solicitud</label><p>${esc(x.trabajo||x.detalle||'No se pudo identificar automáticamente.')}</p></div><div class="detail-grid"><div><label>Empresa</label><p>${esc(x.empresa||'No detectada')}</p></div><div><label>Local</label><p>${esc(x.local||'No detectado')}</p></div></div>${x.fechaSolicitud?`<div class="detail-section"><label>Fecha mencionada en la solicitud</label><p>${esc(x.fechaSolicitud)}</p></div>`:''}${x.local?`<div class="detail-section"><label>Local / ubicación mencionada</label><p>${esc(x.local)}</p></div>`:''}<div class="detail-section"><label>Contenido del correo</label><pre>${esc(x.body||'Sin contenido disponible')}</pre></div>${x.attachments?.length?`<div class="detail-section"><label>Adjuntos</label><p>${x.attachments.map(a=>esc(a)).join('<br>')}</p></div>`:''}<a class="btn btn-primary gmail-link" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(x.id)}" target="_blank" rel="noopener">Abrir correo en Gmail</a>`; show($('modal')); document.body.classList.add('no-scroll'); }
+function openModal(id){ const x=allItems.find(i=>i.id===id); if(!x)return; $('modalShift').textContent=x.turno; $('modalShift').className='badge '+(x.turno==='Noche'?'night':''); $('modalCompany').textContent=x.empresa||'Empresa no detectada'; $('modalContent').innerHTML=`<div class="detail-grid"><div><label>Fecha</label><p>${fmtDate(x.receivedAt)}</p></div><div><label>Hora</label><p>${fmtTime(x.receivedAt)}</p></div><div><label>Remitente</label><p>${esc(x.from)}</p></div><div><label>Estado</label><p>${esc(x.status||'Sin clasificar')}</p></div></div><div class="detail-section"><label>Asunto</label><p>${esc(x.subject)}</p></div><div class="detail-section highlight"><label>Trabajo / solicitud</label><p>${esc(x.trabajo||x.detalle||'No se pudo identificar automáticamente.')}</p></div><div class="detail-grid"><div><label>Empresa</label><p>${esc(x.empresa||'No detectada')}</p></div><div><label>Local</label><p>${esc(x.local||'No detectado')}</p></div></div>${x.fechaSolicitud?`<div class="detail-section"><label>Fecha mencionada en la solicitud</label><p>${esc(x.fechaSolicitud)}</p></div>`:''}${x.local?`<div class="detail-section"><label>Local / ubicación mencionada</label><p>${esc(x.local)}</p></div>`:''}<div class="detail-section"><label>Contenido del correo</label><pre>${esc(x.body||'Sin contenido disponible')}</pre></div>${x.attachments?.length?`<div class="detail-section"><label>Adjuntos</label><p>${x.attachments.map(a=>esc(a)).join('<br>')}</p></div>`:''}<button id="openGmailBtn" class="btn btn-primary gmail-link">Abrir mensaje en Gmail</button>`; show($('modal')); document.body.classList.add('no-scroll'); const g=$('openGmailBtn'); if(g)g.onclick=()=>openGmailMessage(x); }
 function closeModal(){hide($('modal'));document.body.classList.remove('no-scroll');}
+setupPWA();
 init();

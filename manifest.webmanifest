@@ -1,0 +1,16 @@
+{
+  "name": "Bitácora PlazaCamacho",
+  "short_name": "Bitácora PC",
+  "description": "Control de solicitudes y trabajos recibidos por correo para PlazaCamacho.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f1318",
+  "theme_color": "#11151a",
+  "icons": [
+    {"src":"/icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"/icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"},
+    {"src":"/icons/apple-touch-icon.png","sizes":"180x180","type":"image/png"}
+  ]
+}
