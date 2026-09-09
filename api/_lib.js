@@ -20,7 +20,36 @@ function heuristicParse(subject,from,body){const text=`${subject}\n${body}`;let 
 let local=null;const lm=text.match(/(?:local|tienda|ubicaci[oó]n|sede)\s*[:\-]\s*([^\n,;]{2,70})/i);if(lm)local=lm[1].trim();
 let fechaSolicitud=null;const dm=text.match(/\b(\d{1,2}\s+de\s+[a-záéíóúñ]+(?:\s+de\s+\d{4})?|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\b/i);if(dm)fechaSolicitud=dm[1];
 const cleanSubject=subject.replace(/^(?:(?:fwd?|rv|re)\s*:\s*)+/i,'').trim();const lines=cleanBody(body).split('\n').filter(l=>l.length>12&&!/^(buenos días|buenas tardes|buenas noches|estimados|saludos|cordialmente)[,. ]*$/i.test(l));let detalle=lines.slice(0,3).join(' ').slice(0,450)||cleanSubject||'Sin detalle detectado';if(cleanSubject&&detalle.toLowerCase()===cleanSubject.toLowerCase())detalle=cleanSubject;
-let status='Sin clasificar';if(/confirmad|autorizad|aprobad/i.test(text))status='Confirmado';else if(/solicit|favor|facilidades|requer/i.test(text))status='Pendiente';return{empresa,local,fechaSolicitud,detalle,status}}
-async function aiParse(subject,from,body){const key=process.env.ANTHROPIC_API_KEY;if(!key)return null;const prompt=`Analiza este correo operativo de un centro comercial. Devuelve SOLO JSON válido con: empresa (empresa/tienda/contratista involucrado; no uses PlazaCamacho salvo que realmente sea la empresa solicitante), detalle (resumen claro de qué solicita, máximo 2 oraciones), local (local/sede/ubicación si aparece o null), fechaSolicitud (fecha mencionada para ejecutar la solicitud o null), status (Confirmado, Pendiente o Sin clasificar).\nDe: ${from}\nAsunto: ${subject}\nCuerpo: ${body.slice(0,6000)}`;const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:process.env.ANTHROPIC_MODEL||'claude-sonnet-4-6',max_tokens:450,messages:[{role:'user',content:prompt}]})});if(!r.ok)return null;const d=await r.json();try{return JSON.parse((d.content||[]).map(c=>c.text||'').join('').replace(/```json|```/g,'').trim())}catch{return null}}
-function turnoFor(iso){if(!iso)return 'Día';const h=new Date(iso).getHours();const start=Number(process.env.DAY_SHIFT_START||7),end=Number(process.env.DAY_SHIFT_END||19);return h>=start&&h<end?'Día':'Noche'}
-module.exports={setTokenCookie,clearTokenCookie,getTokenFromReq,redirectUri,exchangeCodeForTokens,getValidAccessToken,gmailFetch,extractBody,getHeader,attachments,heuristicParse,aiParse,turnoFor,cleanBody};
+let trabajo=cleanSubject||detalle;
+const workPatterns=[
+  /(?:trabajo(?:s)?(?:\s+a\s+realizar)?|labor(?:es)?|actividad(?:es)?|servicio|motivo|solicitud)\s*[:\-]\s*([^\n]{4,180})/i,
+  /(?:solicito|solicitamos|se solicita|favor de|brindar facilidades(?: para)?|autorizaci[oó]n(?: para)?|autorizar)\s+([^\n]{4,180})/i
+];
+for(const re of workPatterns){const m=text.match(re);if(m){trabajo=m[1].trim().replace(/[.;]+$/,'');break}}
+trabajo=trabajo.replace(/^(?:fwd?|rv|re)\s*:\s*/i,'').slice(0,220);
+let status='Sin clasificar';if(/confirmad|autorizad|aprobad/i.test(text))status='Confirmado';else if(/solicit|favor|facilidades|requer/i.test(text))status='Pendiente';return{empresa,local,fechaSolicitud,detalle,trabajo,status}}
+async function aiParse(subject,from,body){const key=process.env.ANTHROPIC_API_KEY;if(!key)return null;const prompt=`Analiza este correo operativo de un centro comercial. Devuelve SOLO JSON válido con: empresa (empresa/tienda/contratista involucrado; no uses PlazaCamacho salvo que realmente sea la empresa solicitante), trabajo (nombre corto y claro del trabajo/actividad/solicitud que se realizará, máximo 12 palabras), detalle (resumen claro de qué solicita, máximo 2 oraciones), local (local/sede/ubicación donde se realizará el trabajo si aparece o null), fechaSolicitud (fecha mencionada para ejecutar la solicitud o null), status (Confirmado, Pendiente o Sin clasificar).\nDe: ${from}\nAsunto: ${subject}\nCuerpo: ${body.slice(0,6000)}`;const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:process.env.ANTHROPIC_MODEL||'claude-sonnet-4-6',max_tokens:450,messages:[{role:'user',content:prompt}]})});if(!r.ok)return null;const d=await r.json();try{return JSON.parse((d.content||[]).map(c=>c.text||'').join('').replace(/```json|```/g,'').trim())}catch{return null}}
+function turnoFor(iso,subject='',body=''){
+  const text=`${subject}\n${body}`.toLowerCase();
+  // Reglas operativas solicitadas: el texto explícito manda sobre la hora del correo.
+  if(/\bfuera\s+de\s+horario\b/i.test(text))return 'Noche';
+  if(/\bdentro\s+de(?:l)?\s+horario\b|\bdentro\s+del\s+horario\b/i.test(text))return 'Día';
+
+  // Si el correo menciona una hora de ejecución >= 22:00 (10 p. m.), se considera Noche.
+  const timeRes=[
+    /\b(?:a\s+partir\s+de(?:\s+las)?|desde(?:\s+las)?|hora(?:rio)?\s*[:\-]?|a\s+las)\s*(\d{1,2})(?:[:.]([0-5]\d))?\s*(a\.?\s*m\.?|p\.?\s*m\.?)?/gi,
+    /\b(\d{1,2})[:.]([0-5]\d)\s*(a\.?\s*m\.?|p\.?\s*m\.?)?/gi
+  ];
+  for(const re of timeRes){let m;while((m=re.exec(text))){let h=Number(m[1]);const ap=(m[3]||'').replace(/[.\s]/g,'');if(ap==='pm'&&h<12)h+=12;if(ap==='am'&&h===12)h=0;if(h>=22)return 'Noche';}}
+
+  // Respaldo: si no hay regla en el contenido, usa la hora de recepción del correo.
+  if(!iso)return 'Día';const h=new Date(iso).getHours();const start=Number(process.env.DAY_SHIFT_START||7),end=Number(process.env.DAY_SHIFT_END||19);return h>=start&&h<end?'Día':'Noche';
+}
+function isPromotionalEmail(subject,from,body=''){
+  const text=`${subject}\n${from}\n${body.slice(0,2500)}`.toLowerCase();
+  // Gmail ya clasifica muchos anuncios; estas reglas cubren newsletters/promociones evidentes.
+  const operational=/solicitud|autoriza|autorizaci[oó]n|ingreso|facilidades|mercader[ií]a|proveedor|contratista|sctr|trabajo|mantenimiento|personal|visita|retiro|recepci[oó]n|permiso/i.test(text);
+  if(operational)return false;
+  return /\bsamsung\b|newsletter|bolet[ií]n|promoci[oó]n|publicidad|oferta|descuento|sale\b|cyber\s*(?:wow|days?)|black\s*friday|unsubscribe|cancelar\s+suscripci[oó]n|no\s+deseo\s+recibir|marketing/i.test(text);
+}
+module.exports={setTokenCookie,clearTokenCookie,getTokenFromReq,redirectUri,exchangeCodeForTokens,getValidAccessToken,gmailFetch,extractBody,getHeader,attachments,heuristicParse,aiParse,turnoFor,isPromotionalEmail,cleanBody};

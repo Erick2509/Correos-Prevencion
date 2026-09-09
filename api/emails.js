@@ -1,4 +1,4 @@
-const {getValidAccessToken,gmailFetch,extractBody,getHeader,attachments,heuristicParse,aiParse,turnoFor,cleanBody}=require('./_lib');
+const {getValidAccessToken,gmailFetch,extractBody,getHeader,attachments,heuristicParse,aiParse,turnoFor,isPromotionalEmail,cleanBody}=require('./_lib');
 
 // Lee Gmail por bloques pequeños para no agotar la cuota por usuario.
 // Cada actualización trae PAGE_SIZE correos; el navegador puede pedir el siguiente bloque.
@@ -46,12 +46,14 @@ module.exports=async(req,res)=>{
       const receivedAt=date?new Date(date).toISOString():new Date(Number(full.internalDate)||Date.now()).toISOString();
       let parsed=await aiParse(subject,from,body).catch(()=>null);
       if(!parsed)parsed=heuristicParse(subject,from,body);
-      return {id:m.id,subject,from,receivedAt,turno:turnoFor(receivedAt),empresa:parsed.empresa||'',detalle:parsed.detalle||'',local:parsed.local||null,fechaSolicitud:parsed.fechaSolicitud||null,status:parsed.status||'Sin clasificar',body:cleanBody(body),attachments:attachments(full.payload)};
+      if(isPromotionalEmail(subject,from,body))return null;
+      return {id:m.id,subject,from,receivedAt,turno:turnoFor(receivedAt,subject,body),empresa:parsed.empresa||'',trabajo:parsed.trabajo||parsed.detalle||subject,detalle:parsed.detalle||'',local:parsed.local||null,fechaSolicitud:parsed.fechaSolicitud||null,status:parsed.status||'Sin clasificar',body:cleanBody(body),attachments:attachments(full.payload)};
     });
 
-    items.sort((a,b)=>new Date(b.receivedAt)-new Date(a.receivedAt));
-    const next=(already+items.length<MAX_LOADED)?(listing.nextPageToken||null):null;
-    res.end(JSON.stringify({items,total:items.length,query:q,nextPageToken:next,hasMore:!!next,maxLoaded:MAX_LOADED,pageSize:PAGE_SIZE}));
+    const filteredItems=items.filter(Boolean);
+    filteredItems.sort((a,b)=>new Date(b.receivedAt)-new Date(a.receivedAt));
+    const next=(already+ids.length<MAX_LOADED)?(listing.nextPageToken||null):null;
+    res.end(JSON.stringify({items:filteredItems,total:filteredItems.length,query:q,nextPageToken:next,hasMore:!!next,maxLoaded:MAX_LOADED,pageSize:PAGE_SIZE}));
   }catch(e){
     const msg=e.message||'Error leyendo Gmail';
     const quota=/quota|rate limit|user-rate|429|403/i.test(msg);
