@@ -1,5 +1,61 @@
 const {getValidAccessToken,gmailFetch,extractBody,getHeader,attachments,heuristicParse,aiParse,turnoFor,cleanBody}=require('./_lib');
-const MAX_TOTAL=Math.min(Number(process.env.MAX_EMAILS||300),1000);
-async function listAll(q,token){let ids=[],pageToken='';while(ids.length<MAX_TOTAL){let path=`messages?q=${encodeURIComponent(q)}&maxResults=${Math.min(100,MAX_TOTAL-ids.length)}`;if(pageToken)path+=`&pageToken=${encodeURIComponent(pageToken)}`;const d=await gmailFetch(path,token);ids.push(...(d.messages||[]));pageToken=d.nextPageToken;if(!pageToken)break}return ids.slice(0,MAX_TOTAL)}
-async function mapLimit(arr,limit,fn){const out=new Array(arr.length);let i=0;async function worker(){while(i<arr.length){const n=i++;out[n]=await fn(arr[n])}}await Promise.all(Array.from({length:Math.min(limit,arr.length)},worker));return out}
-module.exports=async(req,res)=>{res.setHeader('Content-Type','application/json');let token;try{token=await getValidAccessToken(req,res)}catch{}if(!token){res.statusCode=401;return res.end(JSON.stringify({error:'No autenticado'}))}const url=new URL(req.url,`https://${req.headers.host}`);const q=url.searchParams.get('q')||process.env.DEFAULT_GMAIL_QUERY||'from:plazacamacho newer_than:1y';try{const ids=await listAll(q,token);const items=await mapLimit(ids,6,async m=>{const full=await gmailFetch(`messages/${m.id}?format=full`,token),h=full.payload?.headers||[],subject=getHeader(h,'Subject')||'(sin asunto)',from=getHeader(h,'From')||'',date=getHeader(h,'Date'),body=extractBody(full.payload)||full.snippet||'',receivedAt=date?new Date(date).toISOString():new Date(Number(full.internalDate)||Date.now()).toISOString();let parsed=await aiParse(subject,from,body).catch(()=>null);if(!parsed)parsed=heuristicParse(subject,from,body);return{id:m.id,subject,from,receivedAt,turno:turnoFor(receivedAt),empresa:parsed.empresa||'',detalle:parsed.detalle||'',local:parsed.local||null,fechaSolicitud:parsed.fechaSolicitud||null,status:parsed.status||'Sin clasificar',body:cleanBody(body),attachments:attachments(full.payload)}});items.sort((a,b)=>new Date(b.receivedAt)-new Date(a.receivedAt));res.end(JSON.stringify({items,total:items.length,limit:MAX_TOTAL,query:q}))}catch(e){res.statusCode=500;res.end(JSON.stringify({error:e.message||'Error leyendo Gmail'}))}};
+
+// Lee Gmail por bloques pequeños para no agotar la cuota por usuario.
+// Cada actualización trae PAGE_SIZE correos; el navegador puede pedir el siguiente bloque.
+const PAGE_SIZE=Math.max(5,Math.min(Number(process.env.GMAIL_PAGE_SIZE||20),30));
+const MAX_LOADED=Math.max(PAGE_SIZE,Math.min(Number(process.env.MAX_EMAILS||200),1000));
+
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+
+async function mapLimit(arr,limit,fn){
+  const out=new Array(arr.length); let i=0;
+  async function worker(){while(true){const n=i++;if(n>=arr.length)return;out[n]=await fn(arr[n],n)}}
+  await Promise.all(Array.from({length:Math.min(limit,arr.length||1)},()=>worker()));
+  return out;
+}
+
+module.exports=async(req,res)=>{
+  res.setHeader('Content-Type','application/json; charset=utf-8');
+  res.setHeader('Cache-Control','no-store');
+  let token;
+  try{token=await getValidAccessToken(req,res)}catch{}
+  if(!token){res.statusCode=401;return res.end(JSON.stringify({error:'No autenticado'}))}
+
+  const url=new URL(req.url,`https://${req.headers.host}`);
+  const q=url.searchParams.get('q')||process.env.DEFAULT_GMAIL_QUERY||'newer_than:1y';
+  const pageToken=url.searchParams.get('pageToken')||'';
+  const already=Math.max(0,Number(url.searchParams.get('already')||0));
+  if(already>=MAX_LOADED)return res.end(JSON.stringify({items:[],total:0,query:q,nextPageToken:null,hasMore:false,maxLoaded:MAX_LOADED}));
+
+  try{
+    const maxResults=Math.min(PAGE_SIZE,MAX_LOADED-already);
+    let path=`messages?q=${encodeURIComponent(q)}&maxResults=${maxResults}`;
+    if(pageToken)path+=`&pageToken=${encodeURIComponent(pageToken)}`;
+    const listing=await gmailFetch(path,token);
+    const ids=listing.messages||[];
+
+    // Concurrencia baja + pequeña separación: evita ráfagas contra Gmail API.
+    const items=await mapLimit(ids,2,async(m,n)=>{
+      if(n>0)await sleep(90);
+      const full=await gmailFetch(`messages/${m.id}?format=full`,token,{retries:3});
+      const h=full.payload?.headers||[];
+      const subject=getHeader(h,'Subject')||'(sin asunto)';
+      const from=getHeader(h,'From')||'';
+      const date=getHeader(h,'Date');
+      const body=extractBody(full.payload)||full.snippet||'';
+      const receivedAt=date?new Date(date).toISOString():new Date(Number(full.internalDate)||Date.now()).toISOString();
+      let parsed=await aiParse(subject,from,body).catch(()=>null);
+      if(!parsed)parsed=heuristicParse(subject,from,body);
+      return {id:m.id,subject,from,receivedAt,turno:turnoFor(receivedAt),empresa:parsed.empresa||'',detalle:parsed.detalle||'',local:parsed.local||null,fechaSolicitud:parsed.fechaSolicitud||null,status:parsed.status||'Sin clasificar',body:cleanBody(body),attachments:attachments(full.payload)};
+    });
+
+    items.sort((a,b)=>new Date(b.receivedAt)-new Date(a.receivedAt));
+    const next=(already+items.length<MAX_LOADED)?(listing.nextPageToken||null):null;
+    res.end(JSON.stringify({items,total:items.length,query:q,nextPageToken:next,hasMore:!!next,maxLoaded:MAX_LOADED,pageSize:PAGE_SIZE}));
+  }catch(e){
+    const msg=e.message||'Error leyendo Gmail';
+    const quota=/quota|rate limit|user-rate|429|403/i.test(msg);
+    res.statusCode=quota?429:500;
+    res.end(JSON.stringify({error:quota?'Gmail alcanzó temporalmente el límite de consultas. Espera unos segundos y vuelve a intentar. Los correos ya cargados no se perderán.':msg,quota}));
+  }
+};

@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
-const DEFAULT_QUERY = 'from:plazacamacho newer_than:1y';
-let allItems = [], filteredItems = [], page = 1;
+const DEFAULT_QUERY = 'newer_than:1y';
+let allItems = [], filteredItems = [], page = 1, nextPageToken = null, loadingMore = false;
 const PAGE_SIZE = 10;
 
 function show(el){ el.classList.remove('hidden'); }
@@ -11,41 +11,48 @@ function fmtTime(iso){ if(!iso)return '—'; return new Date(iso).toLocaleTimeSt
 
 async function init(){
   const r=await fetch('/api/session'); const d=await r.json();
-  if(d.connected){ show($('dashboard')); hide($('gate')); $('authArea').innerHTML='<button id="logoutBtn" class="btn btn-ghost">Desconectar</button>'; $('logoutBtn').onclick=logout; $('queryInput').value=localStorage.getItem('gmailQuery')||DEFAULT_QUERY; loadEmails(); }
+  if(d.connected){ show($('dashboard')); hide($('gate')); $('authArea').innerHTML='<button id="logoutBtn" class="btn btn-ghost">Desconectar</button>'; $('logoutBtn').onclick=logout; $('queryInput').value=localStorage.getItem('gmailQuery')||DEFAULT_QUERY; loadEmails(false); }
   else { show($('gate')); hide($('dashboard')); }
 }
 async function logout(){ await fetch('/api/logout',{method:'POST'}); location.reload(); }
 $('connectBtn').onclick=()=>location.href='/api/auth-url';
-$('reloadBtn').onclick=loadEmails;
-$('searchBtn').onclick=()=>{ localStorage.setItem('gmailQuery',$('queryInput').value.trim()||DEFAULT_QUERY); loadEmails(); };
+$('reloadBtn').onclick=()=>loadEmails(false);
+$('searchBtn').onclick=()=>{ localStorage.setItem('gmailQuery',$('queryInput').value.trim()||DEFAULT_QUERY); loadEmails(false); };
+$('moreBtn').onclick=()=>loadEmails(true);
 $('clearBtn').onclick=()=>{ $('textFilter').value=''; $('dateFrom').value=''; $('dateTo').value=''; $('shiftFilter').value=''; $('companyFilter').value=''; applyFilters(); };
 ['textFilter','dateFrom','dateTo','shiftFilter','companyFilter'].forEach(id=>$(id).addEventListener(id==='textFilter'?'input':'change',applyFilters));
 $('prevBtn').onclick=()=>{ if(page>1){page--;renderPage();} };
 $('nextBtn').onclick=()=>{ if(page*PAGE_SIZE<filteredItems.length){page++;renderPage();} };
 $('closeModal').onclick=closeModal; $('modal').onclick=e=>{if(e.target===$('modal'))closeModal();}; document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 
-async function loadEmails(){
-  hide($('emptyState')); hide($('errorState')); $('list').innerHTML=''; hide($('pager')); show($('loadingState')); $('countLabel').textContent='';
+async function loadEmails(more=false){
+  if(loadingMore)return; loadingMore=true;
+  hide($('errorState'));
+  if(!more){ allItems=[]; nextPageToken=null; $('list').innerHTML=''; hide($('emptyState')); hide($('pager')); hide($('moreWrap')); show($('loadingState')); $('countLabel').textContent=''; }
+  else { $('moreBtn').disabled=true; $('moreBtn').textContent='Cargando…'; }
   try{
-    const q=encodeURIComponent($('queryInput').value.trim()||DEFAULT_QUERY);
-    const r=await fetch(`/api/emails?q=${q}`);
+    const q=$('queryInput').value.trim()||DEFAULT_QUERY;
+    const params=new URLSearchParams({q,already:String(allItems.length)});
+    if(more&&nextPageToken)params.set('pageToken',nextPageToken);
+    const r=await fetch(`/api/emails?${params.toString()}`);
     if(r.status===401){location.reload();return;}
     const d=await r.json(); if(!r.ok)throw new Error(d.error||`Error ${r.status}`);
-    allItems=d.items||[]; fillCompanies(); updateSummary(); applyFilters();
-  }catch(e){ hide($('loadingState')); $('errorText').textContent=e.message||'No se pudieron cargar los correos.'; show($('errorState')); }
+    const seen=new Set(allItems.map(x=>x.id));
+    allItems=[...allItems,...(d.items||[]).filter(x=>!seen.has(x.id))].sort((a,b)=>new Date(b.receivedAt)-new Date(a.receivedAt));
+    nextPageToken=d.nextPageToken||null;
+    fillCompanies(); updateSummary(); applyFilters();
+    nextPageToken?show($('moreWrap')):hide($('moreWrap'));
+  }catch(e){ hide($('loadingState')); $('errorText').textContent=e.message||'No se pudieron cargar los correos.'; show($('errorState')); if(allItems.length)applyFilters(); }
+  finally{ loadingMore=false; $('moreBtn').disabled=false; $('moreBtn').textContent='Cargar más correos de Gmail'; }
 }
 function fillCompanies(){ const current=$('companyFilter').value; const names=[...new Set(allItems.map(x=>x.empresa).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es')); $('companyFilter').innerHTML='<option value="">Todas</option>'+names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join(''); if(names.includes(current))$('companyFilter').value=current; }
 function updateSummary(){ $('totalCount').textContent=allItems.length; $('dayCount').textContent=allItems.filter(x=>x.turno==='Día').length; $('nightCount').textContent=allItems.filter(x=>x.turno==='Noche').length; $('companyCount').textContent=new Set(allItems.map(x=>x.empresa).filter(Boolean)).size; }
 function applyFilters(){
   const text=$('textFilter').value.trim().toLowerCase(), from=$('dateFrom').value, to=$('dateTo').value, shift=$('shiftFilter').value, company=$('companyFilter').value;
-  filteredItems=allItems.filter(x=>{
-    const hay=`${x.empresa||''} ${x.subject||''} ${x.detalle||''} ${x.from||''}`.toLowerCase();
-    const day=(x.receivedAt||'').slice(0,10);
-    return (!text||hay.includes(text))&&(!from||day>=from)&&(!to||day<=to)&&(!shift||x.turno===shift)&&(!company||x.empresa===company);
-  }); page=1; renderPage();
+  filteredItems=allItems.filter(x=>{ const hay=`${x.empresa||''} ${x.subject||''} ${x.detalle||''} ${x.from||''}`.toLowerCase(); const day=(x.receivedAt||'').slice(0,10); return (!text||hay.includes(text))&&(!from||day>=from)&&(!to||day<=to)&&(!shift||x.turno===shift)&&(!company||x.empresa===company); }); page=1; renderPage();
 }
 function renderPage(){
-  hide($('loadingState')); $('countLabel').textContent=`${filteredItems.length} de ${allItems.length} correos`;
+  hide($('loadingState')); $('countLabel').textContent=`${filteredItems.length} de ${allItems.length} correos cargados`;
   if(!filteredItems.length){$('list').innerHTML='';show($('emptyState'));hide($('pager'));return;} hide($('emptyState'));
   const start=(page-1)*PAGE_SIZE, slice=filteredItems.slice(start,start+PAGE_SIZE);
   $('list').innerHTML=slice.map(x=>`<article class="mail-card" data-id="${esc(x.id)}"><div class="mail-main"><div class="mail-top"><span class="badge ${x.turno==='Noche'?'night':''}">${esc(x.turno)}</span><span class="mail-date">${fmtDate(x.receivedAt)} · ${fmtTime(x.receivedAt)}</span></div><h3>${esc(x.empresa||'Empresa no detectada')}</h3><p class="subject">${esc(x.subject)}</p><p class="detail">${esc(x.detalle||'Sin detalle detectado')}</p></div><button class="btn btn-ghost detail-btn">Ver detalle</button></article>`).join('');
